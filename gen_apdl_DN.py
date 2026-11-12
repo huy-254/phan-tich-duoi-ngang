@@ -2,7 +2,7 @@
 """
 Sinh file APDL (ANSYS 2023) mo hinh shell nhieu lop cho toan bo duoi ngang DN,
 dung truc tiep du lieu va xep lop trong main_DN.m / cross_section_analysis_DN.m.
-Duoi ngang ngam chat tai hai dau y = +-FIX_Y (cum duoi chu UD, twin boom).
+Duoi ngang ngam chat tai hai dau y = +-FIX_Y (cum duoi chu U, twin boom).
 Chay:  py -3 gen_apdl_DN.py   -> tao DN_shell.inp
 """
 import numpy as np
@@ -21,7 +21,7 @@ XI1, XI2   = 0.1618, 0.6909                # vi tri tam dam (phan day cung tu me
 RIBS       = [0, 1200, 1500]               # vi tri suon (mm), lay doi xung
 Y_TIPZ     = 1.45          # |y| >= Y_TIPZ: vung xep lop sat ngam
 W_REINF1, W_REINF2 = 0.040, 0.042          # be rong dai vo gia cuong dam truoc / sau (m)
-S1, S2     = 0.011148, 0.011225            # be rong side cap dam truoc / sau (m)
+sidecap_1_width, sidecap_2_width     = 0.011148, 0.011225            # be rong side cap dam truoc / sau (m)
 CORE_SKIN, CORE_RIB, CORE_SP1, CORE_SP2 = 0.005, 0.010, 0.014, 0.016
 FRONT_SHARE = 0.8          # ty le tai dat vao dam truoc (nhu M_t trong cross_section_analysis_DN.m)
 G_ACC      = 9.81          # trong luong ban than (n_load = 1)
@@ -42,7 +42,7 @@ T_UD = 0.3/rhof/vf
 E_F, NU_F, RHO_F = 70e6, 0.3, 60.0     # PVC_Foam.m
 
 # ---------------------------------------------------------------- hinh hoc
-# NACA 0015, file 3 cot [x 0 zoneID] (mm), chuan hoa theo day cung (nhu main_DN.m)
+# NACA 0015, file 3 cot [x 0 z] (mm), chuan hoa theo day cung (nhu main_DN.m)
 def load_af(fn):
     a = np.loadtxt(fn)[:, [0, 2]]
     a = a[np.argsort(a[:, 0])]
@@ -61,13 +61,13 @@ def zone(ya):           # 1 = phan giua, 2 = vung sat ngam (theo |y| cua tam pha
 LOADS = np.atleast_2d(np.loadtxt('aerodynamic_load.txt'))
 
 # be rong (m): hop dam = chieu day sandwich bung dam; side cap mot ben, huong vao trong
-def widths(zoneID):
+def widths(z):
     w1 = 16*T_UD + CORE_SP1
     w2 = 16*T_UD + CORE_SP2
-    return w1, w2, S1, S2
+    return w1, w2, sidecap_1_width, sidecap_2_width
 
-def xi_list(y, zoneID):
-    c = chord(y); w1, w2, s1, s2 = widths(zoneID)
+def xi_list(y, z):
+    c = chord(y); w1, w2, s1, s2 = widths(z)
     c1a, c1b = XI1 - w1/2/c, XI1 + w1/2/c
     s1b = c1b + s1/c
     s2a = XI2 - w2/2/c - s2/c
@@ -82,9 +82,9 @@ def xi_list(y, zoneID):
     # S0: cum cosine ve mep truoc
     s = np.linspace(0, 1, N_LE+1)[1:]
     xs += list(r1a*(1-np.cos(np.pi*s/2)))
-    for a, b in zip(br[1:6], br[2:7]): xs.append(b)          # S1..S5 (1 phan tu moi doan)
+    xs += br[2:7]                                            # S1..S5 (1 phan tu moi doan)
     xs += list(np.linspace(r1b, r2a, N_MID+1)[1:])           # S6
-    for a, b in zip(br[7:12], br[8:13]): xs.append(b)        # S7..S11
+    xs += br[8:13]                                           # S7..S11
     xs += list(np.linspace(r2b, 1.0, N_AFT+1)[1:])           # S12
     return np.array(xs)
 
@@ -99,30 +99,30 @@ REGION = {0:'plain', 6:'plain', 12:'plain', 1:'reinf', 5:'reinf', 7:'reinf', 11:
 # ---------------------------------------------------------------- xep lop (cross_section_analysis_DN.m)
 P45, M45 = 45.0, -45.0
 def W(n=1): return [('UD', T_UD, P45), ('UD', T_UD, M45)]*n     # woven = 2 lop UD +-45
-def UD(n=1): return [('UD', T_UD, 0.0)]*n
+def U(n=1): return [('UD', T_UD, 0.0)]*n
 def F(t):   return [('F', t, 0.0)]
-def skin(zoneID):                # ngoai -> trong
-    if zoneID == 1: return W() + F(CORE_SKIN) + W()                   # 1woven/F5/1woven
+def skin(z):                # ngoai -> trong
+    if z == 1: return W() + F(CORE_SKIN) + W()                   # 1woven/F5/1woven
     return W(4)                                                  # 4woven
-def SKR(zoneID):                 # vo gia cuong
-    if zoneID == 1: return W() + UD(4) + W()                           # 1woven/4UD/1woven
-    return W(2) + UD(4) + W(2)                                    # 2woven/4UD/2woven
-def cap(nrep): return (W() + UD(4))*nrep + W()
-def cap1(zoneID, upper): return cap(3)                                # 3(CDB400/4CU300)/CDB400
-def cap2(zoneID, upper): return cap(2)                                # 2(CDB400/4CU300)/CDB400
-def side1(zoneID): return W(4)
-def side2(zoneID): return W(4)
-def skin_lam(zoneID, region, upper):
-    if region == 'plain': return skin(zoneID)
-    base = SKR(zoneID)           # dai gia cuong phu ca vung mu dam va side cap
+def SKR(z):                 # vo gia cuong
+    if z == 1: return W() + U(4) + W()                           # 1woven/4UD/1woven
+    return W(2) + U(4) + W(2)                                    # 2woven/4UD/2woven
+def cap(nrep): return (W() + U(4))*nrep + W()
+def cap1(z, upper): return cap(3)                                # 3(CDB400/4CU300)/CDB400
+def cap2(z, upper): return cap(2)                                # 2(CDB400/4CU300)/CDB400
+def side1(z): return W(4)
+def side2(z): return W(4)
+def skin_lam(z, region, upper):
+    if region == 'plain': return skin(z)
+    base = SKR(z)           # dai gia cuong phu ca vung mu dam va side cap
     if region == 'reinf': return base
-    if region == 'cap1':  return base + cap1(zoneID, upper)
-    if region == 'cap2':  return base + cap2(zoneID, upper)
-    if region == 'side1': return base + side1(zoneID)
-    if region == 'side2': return base + side2(zoneID)
-def web1(zoneID): return W(4) + F(CORE_SP1) + W(4)                    # 4CDB400/foam/4CDB400
-def web2(zoneID): return W(4) + F(CORE_SP2) + W(4)
-def rib(zoneID):  return W(2) + F(CORE_RIB) + W(2)                    # 2woven/foam10/2woven
+    if region == 'cap1':  return base + cap1(z, upper)
+    if region == 'cap2':  return base + cap2(z, upper)
+    if region == 'side1': return base + side1(z)
+    if region == 'side2': return base + side2(z)
+def web1(z): return W(4) + F(CORE_SP1) + W(4)                    # 4CDB400/foam/4CDB400
+def web2(z): return W(4) + F(CORE_SP2) + W(4)
+def rib(z):  return W(2) + F(CORE_RIB) + W(2)                    # 2woven/foam10/2woven
 
 RHO = {'UD': RHO_UD, 'F': RHO_F, 'UD0': 0.0, 'F0': 0.0}
 MATID = {'UD': 1, 'F': 2, 'UD0': 3, 'F0': 4}
@@ -136,17 +136,21 @@ def secid(lam, off):
     return SECS[key]
 
 def lam_t(lam): return sum(t for _, t, _ in lam)
-def web_fracs(y, zoneID, w, zU, zL):
+def web_fracs(y, z, sparID, zU, zL):
     # cao do cac muc nut tren bung dam: OML duoi, mat trong vo, mat trong mu, ...foam..., mat trong mu, mat trong vo, OML tren
-    tsk = lam_t(SKR(zoneID))
-    if w == 0: tcu, tcl = lam_t(cap1(zoneID, True)), lam_t(cap1(zoneID, False))
-    else:      tcu, tcl = lam_t(cap2(zoneID, True)), lam_t(cap2(zoneID, False))
+    t_skin_reinf = lam_t(SKR(z))
+    if sparID == 1: 
+        t_cap_u = lam_t(cap1(z, True))
+        t_cap_l = lam_t(cap1(z, False))
+    else:
+        t_cap_u = lam_t(cap2(z, True))
+        t_cap_l = lam_t(cap2(z, False))
     H = zU - zL
-    lv = [0.0, tsk, tsk+tcl] + list(np.linspace(tsk+tcl, H-tsk-tcu, N_FOAM+1)[1:-1]) + [H-tsk-tcu, H-tsk, H]
+    lv = [0.0, t_skin_reinf, t_skin_reinf+t_cap_l] + list(np.linspace(t_skin_reinf+t_cap_l, H-t_skin_reinf-t_cap_u, N_FOAM+1)[1:-1]) + [H-t_skin_reinf-t_cap_u, H-t_skin_reinf, H]
     f = np.array(lv)/H
-    assert np.all(np.diff(f) > 0), (y, w, f)
+    assert np.all(np.diff(f) > 0), (y, sparID, f)
     return f
-def walls(w, zoneID): return W(4) + W(4)   # 2 thanh, khong foam
+def walls(sparID, z): return W(4) + W(4)   # 2 thanh, khong foam
 
 # ---------------------------------------------------------------- tram doc sai
 yh = sorted(set([0.0, Y_TIPZ, FIX_Y] + [r/1000 for r in RIBS] + [abs(v) for v in LOADS[:, 0]]))
@@ -159,20 +163,20 @@ Y = np.concatenate([-st[:0:-1], st])
 NS = len(Y)
 NC = 2*M + 1           # so nut tren duong bao moi tram (vong kin)
 
-nodes = {}             # id -> (x,y,zoneID)
+nodes = {}             # id -> (x,y,z)
 def nid_c(j, i): return j*NC + i + 1                     # nut duong bao
 # j: chi so mat cat doc sai
 # i: chi so nut tren duong bao mat cat
 # NC: so nut tren duong bao cua mot mat cat
 NBASE_W = NS*NC
-def nid_w(j, w, k):                                       # nut trong bung dam, k = 1..NL-1
-    return NBASE_W + (j*2 + w)*(NL-1) + k
+def nid_w(j, sparID, k):                         # nut trong bung dam, k = 1..NL-1
+    return NBASE_W + (j*2 + sparID-1)*(NL-1) + k
 NBASE_R = NBASE_W + NS*2*(NL-1)
 
 def contour(j):
     y = Y[j]; c = chord(y); xl = xle(y)
-    zoneID = zone(abs(y))   # zone cua tram (dung cho vi tri nut)
-    xs = xi_list(y, zoneID)
+    z = zone(abs(y))   # zone cua tram (dung cho vi tri nut)
+    xs = xi_list(y, z)
     pts = []
     for k in range(M, 0, -1): pts.append((xl - xs[k]*c, y, zu(xs[k])*c))   # tren: mep sau -> mep truoc
     pts.append((xl, y, 0.0))                                               # mep truoc
@@ -183,22 +187,22 @@ FR = {}
 for j in range(NS):
     pts, xs = contour(j)
     for i, p in enumerate(pts): nodes[nid_c(j, i)] = p
-    for w, K in enumerate([K1, K2]):
+    for sparID, K in enumerate([K1, K2], start=1):   # 1 = dam truoc, 2 = dam sau
         pu = np.array(nodes[nid_c(j, M-K)]); pl = np.array(nodes[nid_c(j, M+K)])
-        FR[j, w] = web_fracs(Y[j], zone(abs(Y[j])), w, pu[2], pl[2])
+        FR[j, sparID] = web_fracs(Y[j], zone(abs(Y[j])), sparID, pu[2], pl[2])
         for k in range(1, NL):
-            nodes[nid_w(j, w, k)] = tuple(pl + (pu-pl)*FR[j, w][k])
+            nodes[nid_w(j, sparID, k)] = tuple(pl + (pu-pl)*FR[j, sparID][k])
 
-def web_node(j, w, k):         # k = 0 (duoi) .. NL (tren)
-    K = K1 if w == 0 else K2
+def web_node(j, sparID, k):         # k = 0 (duoi) .. NL (tren)
+    K = K1 if sparID == 1 else K2
     if k == 0: return nid_c(j, M+K)
     if k == NL: return nid_c(j, M-K)
-    return nid_w(j, w, k)
+    return nid_w(j, sparID, k)
 
 # ---------------------------------------------------------------- phan tu
 elems = []     # (type, sec, esys, n1..n4)
 for j in range(NS-1):
-    ya = abs((Y[j]+Y[j+1])/2); zoneID = zone(ya)
+    ya = abs((Y[j]+Y[j+1])/2); z = zone(ya)
     for i in range(NC):
         n1, n2 = nid_c(j, i), nid_c(j, (i+1) % NC)
         n3, n4 = nid_c(j+1, (i+1) % NC), nid_c(j+1, i)
@@ -208,16 +212,16 @@ for j in range(NS-1):
             reg, upper = REGION[SEG[M-i-1]], True
         else:                               # mat duoi: giua xi_(i-M) va xi_(i-M+1)
             reg, upper = REGION[SEG[i-M]], False
-        lam = skin_lam(zoneID, reg, upper)
+        lam = skin_lam(z, reg, upper)
         etype = {'plain':1, 'reinf':4, 'cap1':2, 'cap2':2, 'side1':3, 'side2':3}[reg]
         elems.append((etype, secid(lam, 'TOP'), 11, n1, n2, n3, n4))
-    for w in (0, 1):
+    for sparID in (1, 2):
         for k in range(NL):
-            if 2 <= k < NL-2: lam = web1(zoneID) if w == 0 else web2(zoneID)   # vung foam
-            elif k in (1, NL-2): lam = walls(w, zoneID)                   # vung mu: chi 2 thanh
-            else: lam = massless(walls(w, zoneID))                        # trung voi chieu day vo: chi giu lien ket, khong khoi luong
-            elems.append((5+w, secid(lam, 'MID'), 11, web_node(j, w, k), web_node(j, w, k+1),
-                          web_node(j+1, w, k+1), web_node(j+1, w, k)))
+            if 2 <= k < NL-2: lam = web1(z) if sparID == 1 else web2(z)   # vung foam
+            elif k in (1, NL-2): lam = walls(sparID, z)                   # vung mu: chi 2 thanh
+            else: lam = massless(walls(sparID, z))                        # trung voi chieu day vo: chi giu lien ket, khong khoi luong
+            elems.append((4+sparID, secid(lam, 'MID'), 11, web_node(j, sparID, k), web_node(j, sparID, k+1),
+                          web_node(j+1, sparID, k+1), web_node(j+1, sparID, k)))
 
 # rib: mat phang y = hang so, chi giua tam hai dam
 rib_y = sorted(set([r/1000 for r in RIBS] + [-r/1000 for r in RIBS]))
@@ -225,24 +229,24 @@ nr = NBASE_R
 links = []     # (nut bung dam, nut mep rib) -> MPC184 rigid beam
 for yr in rib_y:
     j = int(np.argmin(abs(Y - yr))); assert abs(Y[j]-yr) < 1e-9
-    zoneID = zone(abs(yr))
+    z = zone(abs(yr))
     # phap tuyen rib huong +y: rib dau mut dat nut o mat ngoai (TOP tai +FIX_Y, BOT tai -FIX_Y)
     # de ca chieu day nam phia trong, khong lo ra ngoai dau mut vo
     roff = 'MID' if abs(abs(yr) - FIX_Y) > 1e-9 else ('TOP' if yr > 0 else 'BOT')
-    sid = secid(rib(zoneID), roff)
+    sid = secid(rib(z), roff)
     # rib chi chay giua hai dam: tu thanh sau dam truoc (xi = XI1 + w1/2, cot Ka)
     # den thanh truoc dam sau (xi = XI2 - w2/2, cot Kb)
     Ka, Kb = K1 + 1, K2 - 1
     grid = {}
     for K in range(Ka, Kb+1):
         pu = np.array(nodes[nid_c(j, M-K)]); pl = np.array(nodes[nid_c(j, M+K)])
-        fr = FR[j, 0] + (FR[j, 1]-FR[j, 0])*(K-Ka)/(Kb-Ka)
+        fr = FR[j, 1] + (FR[j, 2]-FR[j, 1])*(K-Ka)/(Kb-Ka)
         for k in range(NL+1):
             if k == 0: grid[K, k] = nid_c(j, M+K)
             elif k == NL: grid[K, k] = nid_c(j, M-K)
             else:
                 nr += 1; nodes[nr] = tuple(pl + (pu-pl)*fr[k]); grid[K, k] = nr
-    sid0 = secid(massless(rib(zoneID)), roff)
+    sid0 = secid(massless(rib(z)), roff)
     for K in range(Ka, Kb):
         for k in range(NL):
             elems.append((7, sid0 if k in (0, NL-1) else sid, 0, grid[K, k], grid[K+1, k], grid[K+1, k+1], grid[K, k+1]))
@@ -250,8 +254,8 @@ for yr in rib_y:
     # da chung nut voi vo. Rib dau mut: moi nut deu bi ngam nen khong can noi
     if roff == 'MID':
         for k in range(1, NL):
-            links.append((web_node(j, 0, k), grid[Ka, k]))
-            links.append((web_node(j, 1, k), grid[Kb, k]))
+            links.append((web_node(j, 1, k), grid[Ka, k]))
+            links.append((web_node(j, 2, k), grid[Kb, k]))
 
 # ---------------------------------------------------------------- kiem tra trong Python
 P = {n: np.array(p) for n, p in nodes.items()}
@@ -278,8 +282,8 @@ for e in elems:
     if e[0] in (2, 3):
         A, _ = quad_area_normal(e)
         lam = inv_sec[e[1]][0]
-        zc = abs(np.mean([P[n][1] for n in e[3:7]])); zoneID = zone(zc)
-        base = SKR(zoneID)
+        zc = abs(np.mean([P[n][1] for n in e[3:7]])); z = zone(zc)
+        base = SKR(z)
         split['skin'] += A*areal(base)
         xc = np.mean([P[n][0] for n in e[3:7]]); xi = (xle(zc) - xc)/chord(zc)
         key = 'side' if e[0] == 3 else ('cap1' if xi < 0.5 else 'cap2')
@@ -289,10 +293,10 @@ for e in elems:
 TYPE_NAME = {1:'Vo thuong', 2:'Vo gia cuong + mu dam (truoc & sau)', 3:'Vo gia cuong + side cap',
              4:'Vo gia cuong (ngoai mu/side cap)', 5:'Bung dam truoc', 6:'Bung dam sau', 7:'Rib'}
 
-# nut bung dam (dam truoc w = 0, dam sau w = 1) tai tram gan yt nhat
-def station_web_nodes(yt, w):
+# nut bung dam (dam truoc sparID = 1, dam sau sparID = 2) tai tram gan yt nhat
+def station_web_nodes(yt, sparID):
     j = int(np.argmin(abs(Y - yt)))
-    return Y[j], [web_node(j, w, k) for k in range(NL+1)]
+    return Y[j], [web_node(j, sparID, k) for k in range(NL+1)]
 
 # ---------------------------------------------------------------- ghi APDL
 L = []
@@ -301,7 +305,7 @@ w('! =====================================================================')
 w('! Mo hinh shell nhieu lop toan bo duoi ngang DN - sinh tu gen_apdl_DN.py')
 w('! Du lieu: main_DN.m, cross_section_analysis_DN.m, material_2D.m, ply.m')
 w('! NACA 0015, day cung 550 mm, sai -1.5..1.5 m, ngam chat tai hai dau y = +-1.5 m')
-w('! Don vi SI (m, kg, N, Pa).  x: huong ve phia truoc, y: doc sai, zoneID: len')
+w('! Don vi SI (m, kg, N, Pa).  x: huong ve phia truoc, y: doc sai, z: len')
 w('! Nut vo dat tai OML, cac lop dap vao trong (SECOFFSET,TOP, phap tuyen huong ra ngoai)')
 w('! Mu dam / side cap: ghep vao laminate vo gia cuong, xep tiep sau cac lop vo')
 w('! Bung dam (thanh truoc + foam + thanh sau) va rib: shell sandwich dat tai mat giua')
@@ -363,7 +367,7 @@ w('MAT,3                   ! MPC184 rigid beam tinh khoi luong theo DENS -> dung
 for na, nb in links: w(f'E,{na},{nb}')
 w('MAT,1')
 w('! Lenh isoparametric view cho bai toan')
-w('/VUP,1,zoneID')
+w('/VUP,1,Z')
 w('/VIEW,1,-1,-1,1')
 w('/AUTO,1')
 w('/REPLOT')
@@ -378,11 +382,11 @@ w(f'NSEL,S,LOC,Y,{FIX_Y-1e-5},{FIX_Y+1e-5}')
 w(f'NSEL,A,LOC,Y,{-FIX_Y-1e-5},{-FIX_Y+1e-5}')
 w('D,ALL,ALL')
 w('NSEL,ALL')
-w(f'ACEL,0,0,{G_ACC}            ! trong luong ban than theo -zoneID')
+w(f'ACEL,0,0,{G_ACC}            ! trong luong ban than theo -z')
 w(f'! Luc tap trung tu aerodynamic_load.txt: {FRONT_SHARE:.0%} vao bung dam truoc, phan con lai vao bung dam sau')
 for yl, Fl in LOADS:
-    for wb, share in ((0, FRONT_SHARE), (1, 1-FRONT_SHARE)):
-        _, ns = station_web_nodes(yl, wb)
+    for sparID, share in ((1, FRONT_SHARE), (2, 1-FRONT_SHARE)):
+        _, ns = station_web_nodes(yl, sparID)
         for n in ns: w(f'F,{n},FZ,{Fl*share/len(ns):.6f}')
 w('SOLVE')
 w('*GET,MTOT,ELEM,0,MTOT,X  ! tong khoi luong mo hinh (can IRLF,-1 truoc SOLVE)')
@@ -394,16 +398,16 @@ w('*VWRITE,MTOT')
 w("('Tong khoi luong duoi ngang: ',F10.3,' kg')")
 w("*VWRITE")
 w("('Do vong UZ trung binh tai bung dam truoc / dam sau (mm)')")
-for yy in [-1.5, -1.2, -0.9, -0.6, -0.3, 0.0, 0.3, 0.6, 0.9, 1.2, 1.5]:
-    for wb in (0, 1):
-        ya, ns = station_web_nodes(yy, wb)
+for yy in [-1.2, -0.6, 0.0, 0.3, 0.6, 0.9, 1.2, 1.4]:
+    for sparID in (1, 2):
+        ya, ns = station_web_nodes(yy, sparID)
         w('UZS=0')
         for n in ns:
-            w(f'*GET,UZN,NODE,{n},UD,zoneID')
+            w(f'*GET,UZN,NODE,{n},U,Z')
             w('UZS=UZS+UZN')
-        w(f'UZ{wb}=UZS/{len(ns)}*1000')
+        w(f'UZ{sparID}=UZS/{len(ns)}*1000')
     w(f'YST={ya:.4f}')
-    w('*VWRITE,YST,UZ0,UZ1')
+    w('*VWRITE,YST,UZ1,UZ2')
     w("('  y = ',F8.3,' m   UZ dam truoc = ',F10.4,' mm   UZ dam sau = ',F10.4,' mm')")
 w('*CFCLOS')
 w('FINISH')
@@ -434,12 +438,12 @@ w('*ENDDO')
 w('*CFCLOS')
 w('SET,1,1')
 w('! Lenh isoparametric view cho bai toan')
-w('/VUP,1,zoneID')
+w('/VUP,1,Z')
 w('/VIEW,1,-1,-1,1')
 w('/AUTO,1')
 w('/REPLOT')
 w('PLDISP,1')
-w('! Xem cac mode khac: SET,1,<mode>  roi  PLNSOL,UD,SUM')
+w('! Xem cac mode khac: SET,1,<mode>  roi  PLNSOL,U,SUM')
 
 open(OUT, 'w', encoding='ascii', errors='replace').write('\n'.join(L) + '\n')
 

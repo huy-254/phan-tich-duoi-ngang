@@ -165,7 +165,7 @@ end
 
 
 % FEM analysis
-modeNumber_f = 20;
+modeNumber_f = 5;
 coupled_beam
 
 % In tan so, kieu doi xung va dang dao dong chiem uu the cua tung mode
@@ -256,6 +256,7 @@ for kk = 1:modeNumber_f
     view(-55,30) % nhin tu phia sau (-x) ra phia truoc
     grid on
 end
+
 
 %% Xuat thong so dam tuong duong cua toan canh ra file txt
 % x_E, x_C, x_N: tinh theo phan day cung, tu mep truoc ve phia sau
